@@ -14,17 +14,18 @@
 (defvar obuffer-backend-subrepo-alist
   '(("hg" . ".hgsub")))
 
-(defvar local-test-var nil)
-
-
-;;*** Function for project roots
-
+(defvar obuffer-project-directories
+  '("~/.emacs.d"
+    "~/.config/blender/4.2/scripts/addons/skinrig"
+    "~/library"
+    "~/materials-modeling"
+    "~/business/urlaubmitherzimharz/gatsby"
+    "~/business/fewo-webentwicklung")
+  "Project root directories.")
 
 (defun obuffer-run-root-info ()
   (interactive)
   (message "root_infoo: Get version control backend, revision, nested, state-summary...")
-  ;; To inhibit "root_info: finished" message:
-  ;; (inhibit-sentinel-messages #'async-shell-command "root_info" "*Root Info Command*")
   (async-shell-command "root_info" "*Root Info Command*"))
 
 
@@ -597,6 +598,7 @@ Inspired by `tabulated-list-col-sort'."
           (obuffer-update)
         (obuffer-create)
         (obuffer-mode)
+        (setq truncate-lines t)
         (outline-hide-sublevels 1)
         (goto-char (point-min))))))
 
@@ -910,7 +912,7 @@ Current project is the heading or body where point is located."
 
 (define-minor-mode obuffer-auto-mode
   "Toggle use of Ibuffer's auto-update facility (Ibuffer Auto mode)."
-  nil " OA" nil
+  :init-value nil :lighter " OA" :keymap nil
   (unless (derived-mode-p 'obuffer-mode)
     (error "This buffer is not in Ibuffer mode"))
   (cond ( obuffer-auto-mode
@@ -957,6 +959,7 @@ Current project is the heading or body where point is located."
     (unless (eq (current-buffer) (get-buffer "*Obuffer*"))
       (error "Obuffer: current buffer is no OBuffer"))
     (setq truncate-lines t)
+    (visual-line-mode 0)
     (obuffer-header-line)
     ;; (obuffer-auto-mode 1)
     (define-key obuffer-mode-map "d" 'obuffer-delete)
