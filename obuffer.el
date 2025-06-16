@@ -1,4 +1,4 @@
-;;; obuffer --- Buffer Menu
+;;; obuffer --- Buffer Menu  -*- lexical-binding: t; -*-
 
 
 ;;; Commentary:
@@ -6,6 +6,7 @@
 
 ;;; Code:
 
+(require 'vc)
 
 (defvar obuffer-database-file "/home/dan/.obuffer.db")
 
@@ -15,36 +16,50 @@
   '(("hg" . ".hgsub")))
 
 (defvar obuffer-project-directories
-  '("~/.emacs.d"
+  '(
+    "~/.emacs.d"
+    "~/.emacs.d/lisp/obuffer"
+    "~/.emacs.d/lisp/org-roam-gatsby"
     "~/.config/blender/4.2/scripts/addons/skinrig"
     "~/library"
     "~/materials-modeling"
     "~/business/urlaubmitherzimharz/gatsby"
-    "~/business/fewo-webentwicklung")
+    "~/business/fewo-webentwicklung"
+    )
   "Project root directories.")
 
-(defun obuffer-run-root-info ()
-  (interactive)
-  (message "root_infoo: Get version control backend, revision, nested, state-summary...")
-  (async-shell-command "root_info" "*Root Info Command*"))
+(defun obuffer-get-level ( directory)
+  (let (( level 1))
+    (dolist ( dir obuffer-project-directories)
+      (setq dir (expand-file-name (file-name-as-directory dir)))
+      (unless (string= dir directory)
+        (let (( trim (string-trim directory dir)))
+          (when (< (length trim) (length directory))
+            (setq level (1+ level))))))
+    level))
 
+(defun obuffer-revision-count ( directory backend)
+  "Get the revision count for repository."
+  (let (( default-directory (expand-file-name directory)))
+    (string-trim
+     (cond ((eq backend 'Git)
+            (shell-command-to-string "git rev-list --count HEAD"))
+           (t "0")))))
 
-(defun obuffer-import-project-roots ()
-  (let (( lines (read-lines "/home/dan/.obuffer.log" t))
-          roots)
-    (dolist ( line lines)
-      (let* (( props (split-string line))
-             ( dir (nth 0 props))
-             ( backend (nth 1 props))
-             ( rev (nth 2 props))
-             ( level (nth 3 props))
-             ( states (nth 4 props))
-             ( project-state (nth 5 props)))
-        (setq roots (cons (list dir backend rev level
-                                states project-state)
-                          roots))))
-    (reverse roots)))
-
+(defun obuffer-projects-props ()
+  (let ( projects-props)
+    (dolist (directory (nreverse obuffer-project-directories))
+      (setq directory (expand-file-name (file-name-as-directory directory)))
+      (let (( backend (vc-responsible-backend directory 'no-error)))
+        (setq projects-props
+              (cons `(,directory
+                      ,(if backend (downcase (symbol-name backend)) "--")
+                      ,(obuffer-revision-count directory backend)
+                      ,(number-to-string (obuffer-get-level directory))
+                      "OK"
+                      "running")
+                    projects-props))))
+    projects-props))
 
 (defun obuffer-root-directories ( &optional subdir)
   "List paths of project root directories.
@@ -53,17 +68,13 @@ List only the absolute path with trailing slash of each project
 root.  Starting from SUBDIR, list those root directories which
 contain this SUBDIR."
   (let ( dirs)
-    (dolist ( root-info (obuffer-import-project-roots))
+    (dolist ( root-info (obuffer-projects-props))
       (if subdir
           (when (string-match-p (regexp-quote (car root-info))
                                 (expand-file-name subdir))
             (setq dirs (car root-info)))
         (setq dirs (cons (car root-info) dirs))))
     dirs))
-    
-
-;;*** Function for managing symbolic link dependencies
-
 
 (defun obuffer-start-symlink-monitor ( &optional sleep-interval)
   (unless sleep-interval
@@ -450,7 +461,7 @@ Inspired by `tabulated-list-col-sort'."
 (defun obuffer-create ()
   ;; (obuffer-mode)
   (let* (( inhibit-read-only t)
-         ( roots (obuffer-import-project-roots))
+         ( roots (obuffer-projects-props))
          ( sort-column obuffer-current-sort-column)
          ( project-switch (obuffer-get-file-buffers roots))
          ( projects (nth 0 project-switch))
@@ -970,7 +981,6 @@ Current project is the heading or body where point is located."
     (define-key obuffer-mode-map "u" 'obuffer-unmark)
     (define-key obuffer-mode-map "x" 'obuffer-execute)
     (define-key obuffer-mode-map "g" 'obuffer-update)
-    (define-key obuffer-mode-map "G" 'obuffer-run-root-info)
     (define-key obuffer-mode-map "S" 'obuffer-run-symlink-info)
     (define-key obuffer-mode-map "e" 'obuffer-edit-directory-brief)
     (define-key obuffer-mode-map (kbd "C-c c") 'obuffer-close-project)
