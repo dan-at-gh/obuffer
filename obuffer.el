@@ -7,6 +7,9 @@
 ;;; Code:
 
 (require 'vc)
+(require 'mule-util)
+(require 'outline)
+(require 'markdown-mode)
 
 (defvar obuffer-database-file "/home/dan/.obuffer.db")
 
@@ -18,12 +21,17 @@
 (defvar obuffer-project-directories
   '(
     "~/.emacs.d"
+    "~/.emacs.d/org-roam"
     "~/.emacs.d/lisp/obuffer"
     "~/.emacs.d/lisp/org-roam-gatsby"
     "~/.config/blender/4.2/scripts/addons/skinrig"
+    "~/.local/share/krita"
+    "~/.local/share/applications"
+    "~/.local/bin"
     "~/library"
     "~/materials-modeling"
     "~/business/urlaubmitherzimharz/gatsby"
+    "~/business/novelcanvas/gatsby"
     "~/business/fewo-webentwicklung"
     )
   "Project root directories.")
@@ -48,7 +56,7 @@
 
 (defun obuffer-projects-props ()
   (let ( projects-props)
-    (dolist (directory (nreverse obuffer-project-directories))
+    (dolist (directory (nreverse (copy-tree obuffer-project-directories)))
       (setq directory (expand-file-name (file-name-as-directory directory)))
       (let (( backend (vc-responsible-backend directory 'no-error)))
         (setq projects-props
@@ -83,15 +91,9 @@ contain this SUBDIR."
                                (number-to-string sleep-interval))
                        "*Symlink Info Command*"))
 
-
-
 (defun obuffer-run-symlink-info ()
   (interactive)
   (shell-command "symlink-info"))
-
-;; actually start the background process
-;; (obuffer-start-symlink-monitor)
-
 
 (defun obuffer-find-symlinks ( target)
   (let (( target-base (file-name-nondirectory target))
@@ -112,7 +114,6 @@ contain this SUBDIR."
             (setq symlinks (cons (match-string 1) symlinks))))))
       symlinks))
 
-
 (defun obuffer-find-external-symlinks ( dir)
   (let ( symlinks)
     (with-temp-buffer
@@ -132,17 +133,12 @@ contain this SUBDIR."
               (setq symlinks (cons `(,target . ,link) symlinks)))))))
     symlinks))
     
-
 (defun obuffer-mv-symlinks ( old-target new-target)
   (dolist ( link (obuffer-find-symlinks old-target))
     (delete-file link)
     (make-symbolic-link new-target link 1)
     (message "%s -> %s (old: %s)" link new-target old-target)))
       
-
-;;*** Function associate files to their roots
-
-
 (defun obuffer-file-projects ( file projects roots)
   "Associate buffer file name to project directory."
   (let (( match-length 0)
@@ -164,7 +160,6 @@ contain this SUBDIR."
           (setcdr pair (cons file (cdr pair))))))
     (list project projects)))
 
-
 (defun obuffer-get-file-buffers ( roots)
   "Get buffers visiting files inside project directories."
   (let ( file projects non-project-files non-file-buffers
@@ -180,9 +175,6 @@ contain this SUBDIR."
             (setq projects (cadr file-switch))
           (setq non-project-files (cons file non-project-files)))))
     (list projects non-project-files non-file-buffers hidden-buffers)))
-
-
-;;*** Function for gathering file properties
 
 (defun obuffer-file-props ( file &optional root)
   (let* (( filep (get-file-buffer file))
@@ -217,31 +209,22 @@ contain this SUBDIR."
     (list file buffer dir rel-dir modified
           modtime size state rev mode read-only)))
 
-
-;;*** Function for building the *Obuffer* files
-
-
 (defun obuffer-truncate-buffer-name ( name width)
-  (let (( truncate-string-ellipsis
-          (concat (if (boundp 'truncate-string-ellipsis)
-                      truncate-string-ellipsis
-                    nil)
-                  (file-name-extension name))))
-    (truncate-string-to-width name width nil nil t)))
-
+  (let (( ellipsis (concat (truncate-string-ellipsis)
+                           (file-name-extension name))))
+    (truncate-string-to-width name width nil nil ellipsis)))
 
 (defun obuffer-truncate-name ( name width)
-  (let (( truncate-string-ellipsis "..."))
-    (truncate-string-to-width name width nil nil t)))
-
+  (let (( ellipsis "..."))
+    (truncate-string-to-width name width nil nil ellipsis)))
 
 (defun obuffer-insert-file ( file-props &optional projectp)
+  "Insert file line."
   (let* (( file (nth 0 file-props))
          ( buffer (nth 1 file-props))
          ( file-dir (nth 2 file-props))
          ( file-rel-dir (nth 3 file-props))
          ( modified (nth 4 file-props))
-         ( modtime (nth 5 file-props))
          ( size (nth 6 file-props))
          ( state (nth 7 file-props))
          ( rev (nth 8 file-props))
@@ -267,7 +250,6 @@ contain this SUBDIR."
                     read-only modified
                     (propertize (obuffer-truncate-buffer-name buffer 30)
                                 'font-lock-face 'bold
-                                'mouse-face 'highlight
                                 'buffer-name full-buffer-name
                                 'help-echo (concat full-buffer-name
                                                    "\n" file
@@ -278,7 +260,6 @@ contain this SUBDIR."
                     (obuffer-truncate-name mode 11)
                     state
                     (propertize file-rel-dir
-                                'mouse-face 'highlight
                                 'dir-name file-dir
                                 'help-echo (concat file-dir
                                                    "\n[mouse-2] Show in dired."
@@ -289,9 +270,6 @@ contain this SUBDIR."
                        `( obuffer-buffer ,full-buffer-name
                           obuffer-dir ,file-dir
                           obuffer-file-name ,(file-name-nondirectory file)))))
-
-
-;;*** Function compiling projects
 
 
 (defvar obuffer-compile-commands
@@ -457,17 +435,23 @@ Inspired by `tabulated-list-col-sort'."
                          `( obuffer-dir ,dir))
     (insert "\n")))
 
+(defun obuffer-highlight-line ()
+  (save-excursion
+    (goto-char (point-min))
+    (while (re-search-forward "\n" nil t)
+      (unless (looking-at "^\s*$")
+        (let (( overlay (make-overlay (line-beginning-position 1)
+                                      (line-end-position 1))))
+          (overlay-put overlay
+                       'mouse-face '(:background "violet" :extend)))))))
 
 (defun obuffer-create ()
-  ;; (obuffer-mode)
   (let* (( inhibit-read-only t)
          ( roots (obuffer-projects-props))
-         ( sort-column obuffer-current-sort-column)
          ( project-switch (obuffer-get-file-buffers roots))
          ( projects (nth 0 project-switch))
          ( non-project-files (nth 1 project-switch))
          ( non-file-buffers (nth 2 project-switch))
-         ( hidden-buffers (nth 3 project-switch))
          ( project-buffers (obuffer-project-buffers
                             roots non-file-buffers))
          ( i 0)
@@ -479,8 +463,7 @@ Inspired by `tabulated-list-col-sort'."
       (let* (( dir (nth 0 root))
              ( project-state (nth 5 root))
              ( files (cdr (assoc dir projects)))
-             ( buffers (cdr (assoc dir project-buffers)))
-             ( map (make-sparse-keymap)))
+             ( buffers (cdr (assoc dir project-buffers))))
         (if (string= project-state "closed")
             (setq closed (cons root closed))
           (obuffer-insert-header root)
@@ -497,11 +480,8 @@ Inspired by `tabulated-list-col-sort'."
     (dolist ( root closed)
       (obuffer-insert-header root)
       (insert "\n")))
-  (set-buffer-modified-p nil))
-
-
-;;*** Function for brief description by readme files
-
+  (set-buffer-modified-p nil)
+  (obuffer-highlight-line))
 
 (defun obuffer-directory-brief ( dir &optional readme)
   (let (( file (expand-file-name
@@ -517,7 +497,6 @@ Inspired by `tabulated-list-col-sort'."
         (looking-at "^\\(#+\s\\)?\\(.*\\)$")
         (match-string 2)))))
 
-
 (defun obuffer-edit-directory-brief ()
   (interactive)
   (save-excursion
@@ -526,9 +505,6 @@ Inspired by `tabulated-list-col-sort'."
     (find-file (concat (file-name-as-directory
                         (get-text-property (point) 'obuffer-dir))
                        "README.md"))))
-
-
-;;*** Function for closing a project
 
 (defun obuffer-close-project ()
   (interactive)
@@ -539,9 +515,6 @@ Inspired by `tabulated-list-col-sort'."
                                   (get-text-property (point)
                                                      'obuffer-dir))
                                  ".closed"))))
-
-
-;;*** Function for VC controls
 
 (defun obuffer-vc-working-directory ()
   (get-text-property (save-excursion
@@ -554,17 +527,12 @@ Inspired by `tabulated-list-col-sort'."
   (interactive)
   (vc-dir (obuffer-vc-working-directory)))
   
-
-;;*** Function for interactive opening
-
-
 (defun restore-window-line ( window-line &optional pos window)
   (let (( delta (- (cdr (nth 6 (posn-at-point pos window)))
                    window-line)))
     (if (> delta 0)
         (scroll-up-line delta)
       (scroll-down-line (abs delta)))))
-
 
 (defun obuffer-update ()
   (interactive)
@@ -591,20 +559,14 @@ Inspired by `tabulated-list-col-sort'."
             (redisplay)
             (restore-window-line (nth 2 wp))))))))
 
-
 (defun obuffer-open ()
   (interactive)
   (save-match-data
-    (let* (
-           ;; ( inhibit-modification-hooks t)
-           ( inhibit-read-only t)
+    (let* (( inhibit-read-only t)
            ( switch-to-buffer-preserve-window-point nil)
            ( exists (get-buffer "*Obuffer*"))
            ( buffer (get-buffer-create "*Obuffer*")))
       (switch-to-buffer buffer)
-      ;; (select-window (display-buffer buffer))
-      ;; (unless (eq major-mode 'obuffer-mode)
-      ;;   (switch-to-buffer-other-frame buffer))
       (if exists
           (obuffer-update)
         (obuffer-create)
@@ -613,17 +575,12 @@ Inspired by `tabulated-list-col-sort'."
         (outline-hide-sublevels 1)
         (goto-char (point-min))))))
 
-
 (defun obuffer-use-other-window ()
   (interactive)
   (when (< (count-windows) 2)
     (split-window-sensibly))
   (other-window 1)
   (obuffer-open))
-
-
-;;*** Function for fontification
-
 
 (defun obuffer-fontify-file-entry ( limit)
   (let* (( anchor (if (and (= (point) (line-beginning-position))
@@ -645,10 +602,6 @@ Inspired by `tabulated-list-col-sort'."
             (put-text-property beg end 'face 'bold)))))
     t))
 
-
-;;*** Function for user interaction
-
-
 (defun obuffer-set-control-key ( key)
   (beginning-of-line)
   (let (
@@ -661,33 +614,27 @@ Inspired by `tabulated-list-col-sort'."
         (insert key))
       (beginning-of-line 2))))
 
-
 (defun obuffer-delete ()
   (interactive)
   (obuffer-set-control-key "D"))
-
 
 (defun obuffer-copy ()
   (interactive)
   (obuffer-set-control-key "C"))
 
-
 (defun obuffer-remove-file ()
   (interactive)
   (obuffer-set-control-key "R"))
-
 
 (defun obuffer-move ()
   "Move file."
   (interactive)
   (obuffer-set-control-key "M"))
 
-
 (defun obuffer-back-to-disk-version ()
   "Revert buffer."
   (interactive)
   (obuffer-set-control-key "B"))
-
 
 (defun obuffer-revert-buffer ( buffer)
   "Revert buffer to version saved on disk.
@@ -698,7 +645,6 @@ BUFFER needs to be an buffer visiting an existing file on disk."
                (file-exists-p (buffer-file-name)))
       (revert-buffer t t t))))
 
-
 (defun obuffer-unmark ()
   "Remove mark."
   (interactive)
@@ -708,7 +654,6 @@ BUFFER needs to be an buffer visiting an existing file on disk."
     (unless (looking-at "$")
       (insert " ")))
   (beginning-of-line 2))
-
 
 (defun obuffer-target-directory-ask ( dir &optional create-new)
   (setq dir (expand-file-name
@@ -721,7 +666,6 @@ BUFFER needs to be an buffer visiting an existing file on disk."
     (when create-new
       (make-directory dir 'make-parents))
     dir))
-
 
 (defun obuffer-relocate-file ( old-file new-file key &optional no-confirm)
   "Move file with obuffer key 'M'.
@@ -739,13 +683,11 @@ can be used to enable confirmation for the move."
       (if (file-exists-p old-file)
           (delete-file old-file 'trash)))))
 
-
 (defun obuffer-delete-frames ( buffer)
   (when (> (length (frames-on-display-list)) 1)
     (dolist ( frame (frames-on-display-list))
       (when (get-buffer-window buffer frame)
         (delete-frame frame)))))
-
 
 (defun obuffer-execute ()
   (interactive)
@@ -785,7 +727,6 @@ can be used to enable confirmation for the move."
                (obuffer-revert-buffer buffer)))))
     (obuffer-update)))
 
-
 (defun obuffer-recursive-relocate-files ( old-dir new-dir key)
   (when (file-directory-p new-dir)
     (dolist (buffer (buffer-list))
@@ -795,7 +736,6 @@ can be used to enable confirmation for the move."
                               (concat (file-name-as-directory new-dir)
                                       (substring file (match-end 0))))))
               (obuffer-relocate-file file new-file key 'no-confirm)))))))
-
 
 (defun obuffer-heading-execute ( key)
   (let (( dir (directory-file-name
@@ -819,7 +759,6 @@ Current project is the heading or body where point is located."
       (outline-previous-heading))
     (get-text-property (point) 'obuffer-dir)))
 
-
 (defun obuffer-find-file ()
   (interactive)
   (let (( dir (or (get-text-property (point) 'obuffer-dir)
@@ -829,7 +768,6 @@ Current project is the heading or body where point is located."
     (find-file
      (read-file-name "Find file: " (file-name-as-directory dir))))
   (obuffer-update))
-
 
 (defun obuffer-open-modified ()
   "According to VC status open all added or modified files."
@@ -843,11 +781,9 @@ Current project is the heading or body where point is located."
       (find-file-noselect (expand-file-name (match-string 1 stat-line)))))
   (obuffer-update))
 
-
 (defun obuffer-switch-to-buffer ()
   (interactive)
   (switch-to-buffer (get-text-property (point) 'obuffer-buffer)))
-
 
 (defun obuffer-open-at-mouse ( event)
   (interactive "e")
@@ -861,7 +797,6 @@ Current project is the heading or body where point is located."
       ;;(find-file-other-frame dir-name)
       (find-file dir-name))))
 
-
 (defun obuffer-open-at-mouse-other-window ( event)
   (interactive "e")
   (let (( buffer-name (mouse-posn-property (event-start event)
@@ -874,21 +809,15 @@ Current project is the heading or body where point is located."
       ;;(find-file-other-frame dir-name)
       (find-file-other-window dir-name))))
 
-
-;;*** Function for global key remaps
-
-
 (defun obuffer-undo ( &optional arg)
   (interactive "*P")
   (undo arg)
   (unless (buffer-modified-p)
     (obuffer-update)))
- 
 
 (defun obuffer-dired ()
   (interactive)
   (dired (get-text-property (point) 'obuffer-dir)))
-
 
 (defun obuffer-dired-two-pan ()
   (interactive)
@@ -898,14 +827,9 @@ Current project is the heading or body where point is located."
     (goto-char (point-min))
     (re-search-forward file nil t)))
 
-
-;;*** Hooks
-
-
 ;; (defun buffer-modified-after-change ( a b c)
 ;;   (remove-hook 'after-change-functions 'buffer-modified-after-change)
 ;;   (obuffer-update))
-
 
 ;; (add-hook 'first-change-hook
 ;;   (lambda ()
@@ -917,9 +841,7 @@ Current project is the heading or body where point is located."
 
 ;; (add-hook 'after-save-hook 'obuffer-update)
 
-
 (defvar obuffer-auto-buffers-changed nil)
-
 
 (define-minor-mode obuffer-auto-mode
   "Toggle use of Ibuffer's auto-update facility (Ibuffer Auto mode)."
@@ -932,7 +854,6 @@ Current project is the heading or body where point is located."
         (t
          (remove-hook 'post-command-hook 'obuffer-auto-update-changed))))
 
-
 (defun obuffer-auto-update-changed ()
   (when (frame-or-buffer-changed-p 'obuffer-auto-buffers-changed)
     (dolist ( buf (buffer-list))
@@ -941,7 +862,6 @@ Current project is the heading or body where point is located."
 	      (when (and obuffer-auto-mode
 		             (derived-mode-p 'obuffer-mode))
 	        (obuffer-update)))))))
-
 
 (defun obuffer-buffer-changed-p ()
   (let ((index 0)
@@ -955,15 +875,6 @@ Current project is the heading or body where point is located."
             (setq changed t)
           (setq index (+ index 1)))))
     changed))
-
-
-;;*** Major mode definition
-
-(setq info-index-match 'info-index-match)
-(setq show-paren-mismatch 'show-paren-mismatch)
-(setq trailing-whitespace 'trailing-whitespace)
-(setq fringe 'fringe)
-
 
 (define-derived-mode obuffer-mode outline-mode "OBuffer"
     "Major mode for listing emacs buffers."
@@ -996,24 +907,21 @@ Current project is the heading or body where point is located."
     (font-lock-add-keywords nil
       '(;; (obuffer-fontify-file-entry 0 nil prepend t)
         ;; ("<.*?\\(>\\|\\.\\.\\.\\)" 0 font-lock-warning-face)
-        ("edited" 0 font-lock-variable-name-face)
-        ("added" 0 font-lock-keyword-face)
-        ("\s\\(\s*OK\\)\\]" 1 info-index-match t)
-        ("\s\\(\s*[MAD]*\\)\\]" 1 show-paren-mismatch t)
-        ("\s\\(\s*[MAD]*[?!R]+[MAD]*\\)\\]" 1 font-lock-warning-face t)
-        ("up-to-date" 0 font-lock-comment-face)
-        ("\\*\\(Help\\|info\\)\\*" 0 font-lock-comment-face prepend t)
+        ("edited    " 0 '(:background "light pink"))
+        ("added     " 0 '(:background "orange"))
+        ("up-to-date" 0 '(:background "pale green"))
+        ("-         " 0 '(:background "light pink"))
+        ("\s\\(\s*OK\\)\\]" 1 'info-index-match t)
+        ("\s\\(\s*[MAD]*\\)\\]" 1 'show-paren-mismatch t)
+        ("\s\\(\s*[MAD]*[?!R]+[MAD]*\\)\\]" 1 'font-lock-warning-face t)
+        ("\\*\\(Help\\|info\\)\\*" 0 'font-lock-comment-face prepend t)
         ("\\*\\(Messages\\|scratch\\|Obuffer\\|Ibuffer\\|Buffer List\\)\\*"
-         0 font-lock-keyword-face prepend t)
+         0 'font-lock-keyword-face prepend t)
         ("^[\s%]+\\(.*?\\)\s+[0-9]+\s+dired"
-         1 font-lock-function-name-face prepend t))
+         1 'font-lock-function-name-face prepend t))
       'append)
     (read-only-mode 1))
 
-
-
-
 (provide 'obuffer)
-
 
 ;;; obuffer.el ends here
