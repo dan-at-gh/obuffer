@@ -1,6 +1,6 @@
 # obuffer
 
-## Open
+## TODO
 
 - Per file version numbering
 - Org-roam title in tooltips
